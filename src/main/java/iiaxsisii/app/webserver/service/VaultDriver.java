@@ -1,5 +1,8 @@
 package iiaxsisii.app.webserver.service;
 
+import com.bettercloud.vault.api.Logical;
+import com.bettercloud.vault.response.LogicalResponse;
+import iiaxsisii.app.webserver.config.WebServerConfigs;
 import iiaxsisii.app.webserver.security.AWSCredentialsWrapper;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,6 +19,7 @@ import com.bettercloud.vault.response.AuthResponse;
 import com.bettercloud.vault.Vault;
 import com.bettercloud.vault.VaultConfig;
 
+import javax.annotation.PostConstruct;
 import java.io.ByteArrayInputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -28,36 +32,48 @@ import java.util.List;
 public class VaultDriver {
 
     @Autowired
+    WebServerConfigs serverConfigs;
+
+    @Autowired
     private AWSCredentialsWrapper awsCredentials;
+
+    @Autowired
+    HttpClientWrapper httpClientWrapper;
 
     private Vault vaultClient = null;
 
-    private final static String awsAccount = "rtb";
-    private final static String serviceName = "bidder-3p-settings";
-    public final static String vaultSecretPathPrefix = awsAccount + "/" + serviceName;
+    private String awsAccount;
+    private Region awsRegion;
+    private String serviceName;
+    public String vaultSecretPathPrefix;
+    private String iamTokenServiceEndpoint;
+    private String vaultUrl;
 
-    private final static int engineVersion = 2;
-    private final static Region awsRegion = Region.US_EAST_1;
-    private final static String iamTokenServiceEndpoint = "https://sts.amazonaws.com/";
-    private final static String tokenServiceRequestBody = "Action=GetCallerIdentity&Version=2011-06-15";
-    private final static String vaultUrl = "https://vault-development.triplelift.net/";
-
+    private final String awsSTSRequestBody = "Action=GetCallerIdentity&Version=2011-06-15";
     private final static HashMap<String, List<String>> requestHeaders = new HashMap<>() {{
         put("Content-Type", Arrays.asList("application/x-www-form-urlencoded; charset=utf-8"));
     }};
 
+    private void loginWithToken() throws Exception {
+        final VaultConfig config = new VaultConfig()
+                .address(vaultUrl)
+                .engineVersion(2)
+                .prefixPath(vaultSecretPathPrefix)
+                .token(serverConfigs.getVaultToken())
+                .build();
+        this.vaultClient = new Vault(config);
+    }
 
     private void loginWithAwsIam() throws Exception {
-        final AwsCredentials credentials = awsCredentials.getCredentials();
-        final String vaultRoleName = awsCredentials.getMyIdentity();
 
         final SdkHttpFullRequest unsignedRequest = SdkHttpFullRequest.builder()
                 .uri(new URI(iamTokenServiceEndpoint))
                 .method(SdkHttpMethod.POST)
                 .headers(requestHeaders)
-                .contentStreamProvider(() -> new ByteArrayInputStream(tokenServiceRequestBody.getBytes(StandardCharsets.UTF_8)))
+                .contentStreamProvider(() -> new ByteArrayInputStream(awsSTSRequestBody.getBytes(StandardCharsets.UTF_8)))
                 .build();
 
+        final AwsCredentials credentials = awsCredentials.getCredentials();
         final SdkHttpFullRequest signedRequest = Aws4Signer
                 .create()
                 .sign(unsignedRequest, Aws4SignerParams
@@ -77,17 +93,16 @@ public class VaultDriver {
                     signedHeaders.add(entry.getKey(), array);
                 });
 
-
         final VaultConfig config = new VaultConfig()
                 .address(vaultUrl)
-                .engineVersion(engineVersion)
+                .engineVersion(2)
                 .prefixPath(vaultSecretPathPrefix)
                 .build();
         final Vault vault = new Vault(config);
         final AuthResponse authResponse = vault.auth()
-                .loginByAwsIam(vaultRoleName,
+                .loginByAwsIam(serviceName,
                         Base64.getEncoder().encodeToString(iamTokenServiceEndpoint.getBytes(StandardCharsets.UTF_8)),
-                        Base64.getEncoder().encodeToString(tokenServiceRequestBody.getBytes(StandardCharsets.UTF_8)),
+                        Base64.getEncoder().encodeToString(awsSTSRequestBody.getBytes(StandardCharsets.UTF_8)),
                         Base64.getEncoder().encodeToString(signedHeaders.toString().getBytes(StandardCharsets.UTF_8)),
                         awsAccount);
 
@@ -97,27 +112,39 @@ public class VaultDriver {
         this.vaultClient = new Vault(config);
     }
 
-    public String getSecret(String key)  throws Exception {
-        return getSecret(StringUtils.EMPTY, key);
+    public String getSecretViaToken(String secretFolderPath, String key)  throws Exception {
+        loginWithToken();
+        return getSecret(secretFolderPath, key);
     }
-    public String getSecret(String secretFolderPath, String key) throws Exception {
-        if (vaultClient == null) {
-            loginWithAwsIam();
-        }
 
+    public String getSecretViaIam(String secretFolderPath, String key)  throws Exception {
+        loginWithAwsIam();
+        return getSecret(secretFolderPath, key);
+    }
+
+    public String getSecret(String secretFolderPath, String key) throws Exception {
         // Given the path awsAccountName/serviceName/secretFolder/secretKey or awsAccountName/serviceName/secretKey
         //  for the secret awsAccountName/serviceName is static for each service and
         //  secretFolder/secretKey or /secretKey is the secret itself.
         String secretFullPath;
+        Logical vaultLogical = vaultClient.logical();
+        LogicalResponse vaultResponse;
         if (StringUtils.equals(secretFolderPath, StringUtils.EMPTY)) {
-            secretFullPath = vaultSecretPathPrefix;
+            vaultResponse = vaultLogical.read(vaultSecretPathPrefix + "/" + awsAccount + "/" + serviceName);
         } else {
-            secretFullPath = vaultSecretPathPrefix + "/" + secretFolderPath;
+            vaultResponse = vaultLogical.read(vaultSecretPathPrefix + "/" + awsAccount + "/" + serviceName + "/" + secretFolderPath);
         }
-        final HashMap<String, String> secrets = new HashMap<>(vaultClient.logical()
-                .read(secretFullPath)
-                .getData());
-
+        final HashMap<String, String> secrets = new HashMap<>(vaultResponse.getData());
         return secrets.get(key);
+    }
+
+    @PostConstruct
+    public void postConstruct() {
+        this.awsRegion = Region.of(serverConfigs.getAwsRegion());
+        this.awsAccount = serverConfigs.getAwsAccountName();
+        this.serviceName = serverConfigs.getServiceName();
+        this.vaultSecretPathPrefix = "secret";
+        this.iamTokenServiceEndpoint = serverConfigs.getIamTokenServiceEndpoint();
+        this.vaultUrl = serverConfigs.getVaultUrl();
     }
 }

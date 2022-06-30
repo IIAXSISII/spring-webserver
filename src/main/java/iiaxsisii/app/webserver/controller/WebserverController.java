@@ -1,8 +1,15 @@
 package iiaxsisii.app.webserver.controller;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import iiaxsisii.app.webserver.config.WebServerConfigs;
 import iiaxsisii.app.webserver.security.AWSCredentialsWrapper;
 import iiaxsisii.app.webserver.service.HttpClientWrapper;
 import iiaxsisii.app.webserver.service.VaultDriver;
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -23,6 +30,9 @@ import java.util.Map;
 public class WebserverController {
 
     @Autowired
+    WebServerConfigs serverConfigs;
+
+    @Autowired
     VaultDriver vaultDriver;
 
     @Autowired
@@ -31,24 +41,31 @@ public class WebserverController {
     @Autowired
     HttpClientWrapper httpClientWrapper;
 
-    @GetMapping("/secrets/{secretKey}")
-    public Map<String, String> getSecretsViaIam(@PathVariable String secretKey) throws Exception {
-        String iamMetadataAddress = "http://169.254.169.254/latest/meta-data/iam/info";
-        String iamRole = iamMetadataAddress; //httpClientWrapper.httpGetResponseAsString(iamMetadataAddress);
-        iamRole = awsCredentialsWrapper.getMyIdentity();
+    Logger logger = LoggerFactory.getLogger(HttpClientWrapper.class);
+
+    @GetMapping("iam/secrets/{secretPath}/{secretKey}")
+    public Map<String, String> getSecretsViaIam(@PathVariable String secretPath, @PathVariable String secretKey) throws Exception {
+        String iamRole = awsCredentialsWrapper.getMyIdentity();
 
         Map<String, String> result = new HashMap<>();
 
-        String secret = vaultDriver.getSecret(secretKey);
+        String secret = vaultDriver.getSecretViaIam(secretPath, secretKey);
         AwsCredentials awsCredentials = awsCredentialsWrapper.getCredentials();
         String accessKeyId = awsCredentials.accessKeyId();
 
+        if (StringUtils.isBlank(secret)) {
+            result.put("ERROR", "Secret not found for the provided key!");
+        }
         result.put("secretValue", secret);
         result.put("secretKey", secretKey);
-        result.put("secretPathPrefix", VaultDriver.vaultSecretPathPrefix);
         result.put("iamRole", iamRole);
         result.put("accessKey", accessKeyId);
-
+        result.put("vaultUrl", serverConfigs.getVaultUrl());
+        result.put("vaultRole", serverConfigs.getServiceName());
+        result.put("secretPathPrefix", vaultDriver.vaultSecretPathPrefix + "/"
+                + serverConfigs.getAwsAccountName() + "/"
+                + serverConfigs.getServiceName() + "/"
+                + secretPath);
         return result;
     }
 
@@ -73,5 +90,22 @@ public class WebserverController {
             responseMap.put(count +" InetAddress", inetAddress.getAddress().toString());
             responseMap.put(count + " HostAddress", inetAddress.getHostAddress().toString());
         }
+    }
+
+    @GetMapping("token/secrets/{secretPath}/{secretKey}")
+    public Map<String, String> getSecretsViaToken(@PathVariable String secretPath, @PathVariable String secretKey) throws Exception {
+        Map<String, String> result = new HashMap<>();
+
+        String secret = vaultDriver.getSecretViaToken(secretPath, secretKey);
+
+        if (StringUtils.isBlank(secret)) {
+            result.put("ERROR", "Secret not found for the provided key!");
+        }
+        result.put("secretValue", secret);
+        result.put("secretKey", secretKey);
+        result.put("secretPathPrefix", vaultDriver.vaultSecretPathPrefix + "/" + serverConfigs.getAwsAccountName() + "/" + serverConfigs.getServiceName() + "/" + secretPath);
+        result.put("vaultUrl", serverConfigs.getVaultUrl());
+
+        return result;
     }
 }
