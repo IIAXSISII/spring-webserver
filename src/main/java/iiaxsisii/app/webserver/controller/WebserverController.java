@@ -1,8 +1,6 @@
 package iiaxsisii.app.webserver.controller;
 
-import com.google.gson.Gson;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
+import iiaxsisii.app.webserver.config.ConsulConfigService;
 import iiaxsisii.app.webserver.config.WebServerConfigs;
 import iiaxsisii.app.webserver.security.AWSCredentialsWrapper;
 import iiaxsisii.app.webserver.service.HttpClientWrapper;
@@ -11,12 +9,14 @@ import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import software.amazon.awssdk.auth.credentials.AwsCredentials;
 
+import java.io.IOException;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.SocketException;
@@ -27,6 +27,7 @@ import java.util.Map;
 
 
 @RestController
+@EnableConfigurationProperties(value = ConsulConfigService.class)
 public class WebserverController {
 
     @Autowired
@@ -40,6 +41,9 @@ public class WebserverController {
 
     @Autowired
     HttpClientWrapper httpClientWrapper;
+
+    @Autowired
+    ConsulConfigService consulConfigs;
 
     Logger logger = LoggerFactory.getLogger(HttpClientWrapper.class);
 
@@ -95,9 +99,7 @@ public class WebserverController {
     @GetMapping("token/secrets/{secretPath}/{secretKey}")
     public Map<String, String> getSecretsViaToken(@PathVariable String secretPath, @PathVariable String secretKey) throws Exception {
         Map<String, String> result = new HashMap<>();
-
         String secret = vaultDriver.getSecretViaToken(secretPath, secretKey);
-
         if (StringUtils.isBlank(secret)) {
             result.put("ERROR", "Secret not found for the provided key!");
         }
@@ -105,7 +107,16 @@ public class WebserverController {
         result.put("secretKey", secretKey);
         result.put("secretPathPrefix", vaultDriver.vaultSecretPathPrefix + "/" + serverConfigs.getAwsAccountName() + "/" + serverConfigs.getServiceName() + "/" + secretPath);
         result.put("vaultUrl", serverConfigs.getVaultUrl());
-
         return result;
+    }
+
+    @GetMapping("consul/configs")
+    public Map<String, String> getConsulConfigs() throws IOException {
+       return consulConfigs.getAllConfigs();
+    }
+
+    @GetMapping("consul/configs/{configKey}")
+    public String getConsulConfig(@PathVariable String configKey) throws IOException {
+        return consulConfigs.getConfig(configKey);
     }
 }

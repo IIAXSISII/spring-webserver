@@ -14,6 +14,7 @@ public class WebServerConfigs {
     private String vaultUrl;
     private String vaultToken;
     private String ec2MetadataAddress;
+    private String consulUrl;
 
     public String getAwsAccountName() {
         return awsAccountName;
@@ -72,4 +73,8 @@ public class WebServerConfigs {
     public String getVaultToken() { return vaultToken; }
 
     public void setVaultToken(String vaultToken) { this.vaultToken = vaultToken; }
+
+    public String getConsulUrl() {return consulUrl;}
+
+    public void setConsulUrl(String consulUrl) { this.consulUrl = consulUrl; }
 }

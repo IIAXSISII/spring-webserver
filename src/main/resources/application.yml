@@ -1,0 +1,21 @@
+server:
+  port: 9090
+
+spring:
+  application:
+    name: webserver
+  consul:
+    host: localhost
+    port: 8500
+
+webserver:
+  awsAccountName: rtb
+  awsRegion: us-east-1
+  serviceName: webserver
+  vaultEngineVersion: 2
+  iamTokenServiceEndpoint: https://sts.amazonaws.com/
+  vaultUrl: https://vault-development.triplelift.net/
+  vaultToken: TOKEN_VALUE
+  ec2MetadataAddress: http://169.254.169.254/latest/meta-data
+  consulUrl: https://consul-development.us-east-1.triplelift.net
+
